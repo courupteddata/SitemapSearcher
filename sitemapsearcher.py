@@ -32,7 +32,6 @@ import urllib.robotparser
 import urllib.error
 import gzip
 import defusedxml.ElementTree
-import xml.etree.ElementTree
 from typing import List, Dict, Set, Union
 
 # Some constants
@@ -42,20 +41,16 @@ ROBOTS_TXT = "robots.txt"
 
 
 class SitemapSearcher:
-    def __init__(self, href_lang="en-us", cache_enabled=False):
+    def __init__(self, href_lang=("en-us", "en"), cache_enabled=False):
         """
         Creates the sitemap searcher and then run search on a website with
-        :param href_lang: default to "en-us" if it's set to None then all <xhtml:link > entries are added if they exist
-        :param cache_enabled: Whether to store the cached lookup after parsing sitemap, can enable this if multiple searched
-                              will be happening on the same base_website
+        :param href_lang: defaults to ("en-us", "en") if it's set to None then just loc entry or x-default is used
+        :param cache_enabled: Whether to store the cached lookup after parsing sitemap, can enable this if multiple
+                              searches will be happening on the same base_website
         """
         self._href_lang = href_lang
         self._cache_enabled = cache_enabled
         self._cache = dict()
-
-        # Some most recent fields used for testing
-        self._robots_found_sitemap = set()
-        self._all_sitemaps = set()
 
     def search(self, base_url: str, key_word_list: List[str], case_insensitive=True) -> Dict[str, float]:
         """
@@ -66,20 +61,41 @@ class SitemapSearcher:
         :param case_insensitive: Whether the key_word_list is case insensitive
         :return: A dictionary that contains the original keyword and then a percent of the url entries that matched
         """
-        self._robots_found_sitemap = self._parse_robots_txt(base_url)
+        robots_found_sitemap = self._parse_robots_txt(base_url)
 
         # Add sitemap and sitemap index defaults if no sitemap found
-        if len(self._robots_found_sitemap) == 0:
-            self._all_sitemaps = {self._join_url(base_url, SITEMAP_XML), self._join_url(base_url, SITEMAP_INDEX_XML)}
+        if len(robots_found_sitemap) == 0:
+            all_sitemaps = {self._join_url(base_url, SITEMAP_XML), self._join_url(base_url, SITEMAP_INDEX_XML)}
         else:
-            self._all_sitemaps = self._robots_found_sitemap
+            all_sitemaps = robots_found_sitemap
 
-        local_cache = {}
+        local_cache = set()
 
-        for sitemap_url in self._all_sitemaps:
+        for sitemap_url in all_sitemaps:
             self._handle(sitemap_url, local_cache)
 
-        return {"WIP": 1.0}
+        results = dict()
+
+        for key_word in key_word_list:
+            if case_insensitive:
+                key_word = key_word.lower()
+            results[key_word] = 0
+
+        if not len(local_cache) > 0:
+            return results
+
+        for item in local_cache:
+            if case_insensitive:
+                item = item.lower()
+            item = "/".join(item.split("/")[2:])
+            for key in results:
+                if key in item:
+                    results[key] += 1
+
+        for key in results:
+            results[key] = results[key] / len(local_cache)
+
+        return results
 
     @staticmethod
     def _parse_robots_txt(base_url: str) -> Set[str]:
@@ -98,45 +114,94 @@ class SitemapSearcher:
 
     @staticmethod
     def _join_url(base_url: str, extra_part: str) -> str:
+        """
+        Joins two parts, the base url and the extra part
+        :param base_url: The base url is something like https://google.com
+        :param extra_part: The extra part is something like robots.txt
+        :return: The valid url that is combined of the two
+        """
         return urllib.parse.urljoin(base_url, extra_part)
 
-    def _handle(self, sitemap_url: str, local_cache: dict):
+    def _handle(self, sitemap_url: str, local_cache: set):
+        """
+        This function handles loading the given sitemap url and then adding information to the local cache
+        :param sitemap_url: The sitemap url to load
+        :param local_cache: The local cache to store information in
+        :return: None
+        """
         website_data = self._load_sitemap_data(sitemap_url)
 
+        if website_data is None:
+            return
+
         if self._is_sitemap_index(website_data):
-            print("sitemap_index", sitemap_url, website_data)
             for new_sitemap_url in self._handle_sitemap_index(website_data):
                 self._handle(new_sitemap_url, local_cache)
         else:
-            print("sitemap", sitemap_url, website_data)
-            self._handle_sitemap(website_data)
+            local_cache.update(self._handle_sitemap(website_data))
+
+    def _handle_sitemap(self, sitemap_data: bytes) -> Set[str]:
+        try:
+            sitemap_xml = defusedxml.ElementTree.fromstring(sitemap_data)
+        except defusedxml.ElementTree.ParseError as e:
+            print(f"Failed to parse sitemap. {e}")
+            return set()
+
+        found_locs = set()
+
+        for item in sitemap_xml.findall("{*}url"):
+            # Grab required loc first
+            loc = item.find("{*}loc")
+            if loc is not None:
+                loc = loc.text
+
+            default_test = item.find("*/[@hreflang='x-default']")
+            if default_test is not None:
+                loc = default_test.attrib["href"]
+
+            if self._href_lang is not None:
+                for lang in self._href_lang:
+                    # Check if there is multiple languages and select the correct one
+                    language_specific_loc = item.find(f"*/[@hreflang='{lang}']")
+                    if language_specific_loc is not None:
+                        loc = language_specific_loc.attrib["href"]
+                        break
+
+            if loc is not None:
+                found_locs.add(loc)
+        return found_locs
 
     @staticmethod
-    def _handle_sitemap(sitemap_data: str) -> Set[str]:
-        return set()
+    def _handle_sitemap_index(sitemap_data: bytes) -> Set[str]:
+        """
+        Handles extracting all of the actual sitemap urls
+        :param sitemap_data: The bytes that are downloaded sitemap index
+        :return: a set of sitemap urls as strings
+        """
+        try:
+            sitemap_xml = defusedxml.ElementTree.fromstring(sitemap_data)
+        except defusedxml.ElementTree.ParseError as e:
+            print(f"Failed to parse sitemap index. {e}")
+            return set()
+
+        sitemap_index_entries = set()
+
+        for item in sitemap_xml.findall("{*}sitemap/{*}loc"):
+            sitemap_index_entries.add(item.text)
+
+        return sitemap_index_entries
 
     @staticmethod
-    def _handle_sitemap_index(sitemap_data: str) -> Set[str]:
-        return set()
-
-    @staticmethod
-    def _is_sitemap_index(sitemap_data) -> bool:
+    def _is_sitemap_index(sitemap_data: bytes) -> bool:
         """
         Basic check to determine if the given sitemap is actually an index
         :param sitemap_data:
         :return: True if it is a suspected sitemapindex otherwise false
         """
-        return b"sitemapindex" in sitemap_data
-
-    def _extract_sitemap_entries(self, sitemap_url: str):  # -> List[str]:
-        pass
-        # loaded_xml = defusedxml.ElementTree.fromstring(urllib.request.urlopen(sitemap).read())
-        # Parsing if this is a index
-        # for item in loaded_xml.findall("{*}sitemap"):
-        #     print(defusedxml.ElementTree.tostring(item).decode())
+        return b"<sitemapindex" in sitemap_data
 
     @staticmethod
-    def _load_sitemap_data(sitemap_url) -> Union[str, None]:
+    def _load_sitemap_data(sitemap_url: str) -> Union[bytes, None]:
         """
         This function handle downloading and the possible decompressing of the sitemap data.
         :param sitemap_url: The url to load
@@ -145,7 +210,7 @@ class SitemapSearcher:
         try:
             website_data = urllib.request.urlopen(sitemap_url).read()
         except (urllib.error.ContentTooShortError, urllib.error.HTTPError, urllib.error.ContentTooShortError) as e:
-            print(f"Failed to load given sitemap url. {sitemap_url}. {e.reason()}")
+            print(f"Failed to load given sitemap url. {sitemap_url}. {e}")
             return None
 
         if ".gz" in sitemap_url.split("/")[-1]:
@@ -155,3 +220,7 @@ class SitemapSearcher:
                 print(f"Invalid sitemap that was marked as gzipped, skipping. {sitemap_url}. {e}")
                 return None
         return website_data
+
+
+if __name__ == '__main__':
+    print(SitemapSearcher().search("https://google.com", ["gmail", "search", "company", "business"]))
