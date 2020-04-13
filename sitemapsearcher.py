@@ -87,7 +87,7 @@ class SitemapSearcher:
         for item in local_cache:
             if case_insensitive:
                 item = item.lower()
-            item = "/".join(item.split("/")[2:])
+            item = "/".join(item.split("/")[3:])
             for key in results:
                 if key in item:
                     results[key] += 1
