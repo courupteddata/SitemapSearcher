@@ -1,3 +1,7 @@
+<p>
+  <a href="https://github.com/courupteddata/SitemapSearcher"><img alt="StringBooleanExpression status" src="https://github.com/courupteddata/SitemapSearcher/workflows/SitemapSearcher-unit-tests/badge.svg"></a>
+</p>
+
 # SitemapSearcher
 Created in response to this https://www.reddit.com/r/programmingrequests/comments/fvfihm/mass_sitemap_scraper_and_analyzer_possible/ request.
 
