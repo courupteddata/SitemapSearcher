@@ -71,8 +71,14 @@ class SitemapSearcher:
 
         local_cache = set()
 
-        for sitemap_url in all_sitemaps:
-            self._handle(sitemap_url, local_cache)
+        if self._cache_enabled and base_url in self._cache:
+            local_cache = self._cache[base_url]
+        else:
+            for sitemap_url in all_sitemaps:
+                self._handle(sitemap_url, local_cache)
+
+            if self._cache_enabled:
+                self._cache[base_url] = local_cache
 
         results = dict()
 
@@ -223,4 +229,6 @@ class SitemapSearcher:
 
 
 if __name__ == '__main__':
-    print(SitemapSearcher().search("https://google.com", ["gmail", "search", "company", "business"]))
+    searcher = SitemapSearcher(cache_enabled=True)
+    print(searcher.search("https://google.com", ["gmail", "search", "company", "business"]))
+    print(searcher.search("https://google.com", ["gmail", "search", "company", "business", "google", "else"]))
