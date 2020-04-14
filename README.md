@@ -10,7 +10,7 @@ After downloading the project run:
 ```
 pip3 install -r requirements.txt
 ```
-Now it should be as simple as importing sitemapsearcher and adding a like like:
+Now it should be as simple as importing sitemapsearcher and adding something like this:
 ```pythonstub
 import sitemapsearcher
 if __name__ == '__main__':
@@ -20,7 +20,7 @@ if __name__ == '__main__':
 
 ## Dependencies
 - Python >= 3.8
-- defusedxml python library (to handle parsing xml in a safe manor)
+- defusedxml python library (to handle parsing xml in a safe manner)
 
 ## Extra Features
 If it is desired there is an option to enable a local cache that allows reusing the same found links for multiple times for different searches.
